@@ -17,7 +17,6 @@
 import React, { useState, useEffect } from "react";
 
 import { ConnectButton, useActiveAccount, useReadContract, useSendTransaction } from "thirdweb/react";
-import Footer from '../components/Footer';
 
 import { useNavigate } from "react-router-dom";
 
@@ -2379,31 +2378,7 @@ const Dashboard: React.FC<{ companyData: CompanyData }> = ({ companyData }) => {
 
   const [showQRCodeModal, setShowQRCodeModal] = useState(false);
 
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
 
-  const [successMessage, setSuccessMessage] = useState('');
-
-  // Funzione helper per ottenere il timestamp corretto per un batch
-  const getBatchTimestamp = (batch: Batch) => {
-    if (batch.qrCodeGenerated && batch.qrCodeTimestamp) {
-      return batch.qrCodeTimestamp;
-    } else if (batch.qrCodeGenerated && !batch.qrCodeTimestamp) {
-      // Controlla se esiste un timestamp salvato in localStorage
-      const savedTimestamp = localStorage.getItem(`qr_timestamp_${batch.batchId}`);
-      if (savedTimestamp) {
-        return parseInt(savedTimestamp);
-      } else {
-        // Per QR generati prima di questa modifica, usa un timestamp fisso
-        const fixedTimestamp = 1757772000000 + batch.batchId;
-        localStorage.setItem(`qr_timestamp_${batch.batchId}`, fixedTimestamp.toString());
-        return fixedTimestamp;
-      }
-    } else {
-      const newTimestamp = Date.now();
-      localStorage.setItem(`qr_timestamp_${batch.batchId}`, newTimestamp.toString());
-      return newTimestamp;
-    }
-  };
 
   // State per i filtri
 
@@ -2697,11 +2672,6 @@ const Dashboard: React.FC<{ companyData: CompanyData }> = ({ companyData }) => {
   const handleGenerateQRCode = async (batch: Batch) => {
     try {
       console.log('🔥 Generando QR Code con Firebase Realtime Database per batch:', batch.batchId);
-      console.log('🔍 DEBUG Batch state:', {
-        batchId: batch.batchId,
-        qrCodeGenerated: batch.qrCodeGenerated,
-        qrCodeTimestamp: batch.qrCodeTimestamp
-      });
       
       // Verifica la configurazione Firebase prima di procedere
       const { realtimeDb } = await import('../firebaseConfig');
@@ -2713,18 +2683,15 @@ const Dashboard: React.FC<{ companyData: CompanyData }> = ({ companyData }) => {
       const { ref, set, push } = await import('firebase/database');
       const QRCode = await import('qrcode');
       
-      // Step 1: Log per QR già generato (ma permette rigenerazione)
+      // Step 1: Controlla se il QR code è già stato generato
       if (batch.qrCodeGenerated) {
-        console.log('🔄 Rigenerando QR Code per batch:', batch.batchId);
+        console.log('⚠️ QR Code già generato per questo batch:', batch.batchId);
+        return { success: false, error: 'QR Code già generato per questo batch' };
       }
       
       // Step 2: Prepara i dati del certificato
       const cleanCompanyName = currentCompanyData.companyName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-      // Usa la funzione helper per ottenere il timestamp corretto
-      const timestamp = getBatchTimestamp(batch);
-      console.log('🔍 DEBUG Final timestamp for batch', batch.batchId, ':', timestamp);
-      
-      const certificateId = `${cleanCompanyName}_${batch.batchId}_${timestamp}`;
+      const certificateId = `${cleanCompanyName}_${batch.batchId}_${Date.now()}`;
       const certificateData = {
         batchId: batch.batchId,
         name: batch.name,
@@ -2780,12 +2747,8 @@ const Dashboard: React.FC<{ companyData: CompanyData }> = ({ companyData }) => {
       
       console.log('✅ QR Code scaricato con successo');
       
-      // Step 6: Aggiorna lo stato del batch (preserva il timestamp originale)
-      const updatedBatch = { 
-        ...batch, 
-        qrCodeGenerated: true, 
-        qrCodeTimestamp: batch.qrCodeTimestamp || timestamp // Usa il timestamp originale o quello generato
-      };
+      // Step 6: Aggiorna lo stato del batch
+      const updatedBatch = { ...batch, qrCodeGenerated: true };
       setBatches(prevBatches => 
         prevBatches.map(b => 
           b.batchId === batch.batchId ? updatedBatch : b
@@ -2800,8 +2763,7 @@ const Dashboard: React.FC<{ companyData: CompanyData }> = ({ companyData }) => {
           body: JSON.stringify({
             walletAddress: account?.address,
             batchId: batch.batchId,
-            qrCodeGenerated: true,
-            qrCodeTimestamp: batch.qrCodeTimestamp || timestamp
+            qrCodeGenerated: true
           })
         });
         console.log('✅ Stato QR salvato in Firestore');
@@ -2809,8 +2771,7 @@ const Dashboard: React.FC<{ companyData: CompanyData }> = ({ companyData }) => {
         console.warn('⚠️ Errore salvando stato QR (non critico):', saveError);
       }
       
-      setSuccessMessage('QR Code generato con successo!');
-      setShowSuccessModal(true);
+      alert('🎉 QR Code generato con successo!\n\n🔥 Certificato salvato nel Firebase Realtime Database!\n📱 Il QR code è pronto per l\'uso.');
       
     } catch (error) {
       console.error('❌ Errore durante la generazione QR Code:', error);
@@ -2824,478 +2785,23 @@ const Dashboard: React.FC<{ companyData: CompanyData }> = ({ companyData }) => {
     }
   };
 
-  // Funzione helper per generare ID certificato consistente
-  const generateCertificateId = (batch: Batch, companyName: string) => {
-    const cleanCompanyName = companyName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-    // Se il QR è già generato, usa un ID fisso per mantenere lo stesso QR
-    if (batch.qrCodeGenerated) {
-      return `${cleanCompanyName}_${batch.batchId}_existing`;
-    }
-    return `${cleanCompanyName}_${batch.batchId}_${Date.now()}`;
-  };
-
-  // Funzione per generare HTML certificato (versione client)
-  const generateCertificateHTMLClient = (certificateData: any) => {
-    return `<!DOCTYPE html>
-<html lang="it">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${certificateData.companyName} - Certificato di Tracciabilità</title>
-  
-  <meta property="og:title" content="${certificateData.companyName} - Certificato SimplyChain">
-  <meta property="og:description" content="Certificato di tracciabilità blockchain prodotto da ${certificateData.companyName}">
-  <meta property="og:type" content="website">
-  <meta name="twitter:card" content="summary_large_image">
-  
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { 
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-      background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-      color: #f1f5f9;
-      min-height: 100vh;
-      padding: 20px;
-      line-height: 1.6;
-    }
-    
-    .certificate-container {
-      max-width: 900px;
-      margin: 0 auto;
-      background: rgba(30, 41, 59, 0.95);
-      border-radius: 20px;
-      padding: 40px;
-      box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3);
-      border: 1px solid rgba(139, 92, 246, 0.3);
-      backdrop-filter: blur(10px);
-      position: relative;
-    }
-    
-    
-    .header {
-      text-align: center;
-      margin-bottom: 40px;
-      border-bottom: 2px solid rgba(139, 92, 246, 0.3);
-      padding-bottom: 30px;
-    }
-    
-    .company-name-box {
-      background: linear-gradient(135deg, #06b6d4 0%, #8b5cf6 100%);
-      padding: 20px 30px;
-      border-radius: 15px;
-      margin-bottom: 20px;
-      box-shadow: 0 10px 25px rgba(139, 92, 246, 0.3);
-      border: 2px solid rgba(255, 255, 255, 0.1);
-    }
-    
-    .company-name {
-      font-size: 2.5rem;
-      font-weight: bold;
-      color: #ffffff;
-      margin: 0;
-      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-    }
-    
-    .subtitle {
-      font-size: 1.2rem;
-      color: #94a3b8;
-      margin-bottom: 5px;
-    }
-    
-    .info-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 20px;
-      margin-bottom: 30px;
-    }
-    
-    .info-item {
-      background: rgba(139, 92, 246, 0.1);
-      padding: 20px;
-      border-radius: 12px;
-      border: 1px solid rgba(139, 92, 246, 0.2);
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    
-    .info-item:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 25px rgba(139, 92, 246, 0.15);
-    }
-    
-    .info-label {
-      font-weight: 600;
-      color: #8b5cf6;
-      margin-bottom: 8px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    
-    .info-value {
-      color: #f1f5f9;
-      font-size: 1.1rem;
-      word-break: break-word;
-    }
-    
-    .blockchain-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      color: #06b6d4;
-      text-decoration: none;
-      font-weight: 500;
-      padding: 10px 16px;
-      background: rgba(6, 182, 212, 0.1);
-      border-radius: 25px;
-      border: 1px solid rgba(6, 182, 212, 0.3);
-      transition: all 0.3s ease;
-      margin-top: 10px;
-    }
-    
-    .blockchain-link:hover {
-      background: rgba(6, 182, 212, 0.2);
-      transform: translateY(-1px);
-      box-shadow: 0 4px 15px rgba(6, 182, 212, 0.2);
-    }
-    
-    .section-title {
-      font-size: 1.8rem;
-      font-weight: bold;
-      color: #8b5cf6;
-      margin-bottom: 20px;
-      text-align: center;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-    }
-    
-    .description-section {
-      margin-top: 40px;
-      background: rgba(139, 92, 246, 0.1);
-      border: 1px solid rgba(139, 92, 246, 0.3);
-      border-radius: 15px;
-      padding: 25px;
-    }
-    
-    .description-title {
-      font-size: 1.5rem;
-      font-weight: bold;
-      color: #8b5cf6;
-      margin-bottom: 15px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    
-    .description-content {
-      font-size: 1.1rem;
-      color: #f1f5f9;
-      line-height: 1.7;
-      text-align: justify;
-    }
-    
-    .steps-section {
-      margin-top: 40px;
-    }
-    
-    .step {
-      background: rgba(6, 182, 212, 0.1);
-      border: 1px solid rgba(6, 182, 212, 0.2);
-      border-radius: 12px;
-      padding: 25px;
-      margin-bottom: 20px;
-      position: relative;
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    
-    .step:hover {
-      transform: translateX(5px);
-      box-shadow: 0 8px 25px rgba(6, 182, 212, 0.15);
-    }
-    
-    .step-number-circle {
-      position: absolute;
-      top: -10px;
-      left: 20px;
-      background: #06b6d4;
-      color: #0f172a;
-      width: 30px;
-      height: 30px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: bold;
-      font-size: 0.9rem;
-    }
-    
-    .step-header {
-      font-size: 1.3rem;
-      font-weight: bold;
-      color: #06b6d4;
-      margin-bottom: 15px;
-      margin-left: 20px;
-    }
-    
-    .step-details {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 15px;
-      margin-left: 20px;
-    }
-    
-    .step-detail {
-      font-size: 0.95rem;
-      color: #cbd5e1;
-      background: rgba(15, 23, 42, 0.3);
-      padding: 12px;
-      border-radius: 8px;
-      border: 1px solid rgba(6, 182, 212, 0.1);
-    }
-    
-    .step-detail strong {
-      color: #06b6d4;
-    }
-    
-    .step-description {
-      margin-top: 20px;
-      padding: 15px;
-      background: rgba(6, 182, 212, 0.05);
-      border: 1px solid rgba(6, 182, 212, 0.2);
-      border-radius: 8px;
-    }
-    
-    .step-description strong {
-      color: #06b6d4;
-      font-size: 1rem;
-    }
-    
-    .step-description-content {
-      margin-top: 8px;
-      color: #f1f5f9;
-      line-height: 1.6;
-      text-align: justify;
-    }
-    
-    .footer {
-      text-align: center;
-      margin-top: 40px;
-      padding-top: 20px;
-      border-top: 1px solid rgba(139, 92, 246, 0.3);
-      color: #94a3b8;
-    }
-    
-    @media (max-width: 768px) {
-      .certificate-container {
-        padding: 20px;
-        margin: 10px;
-      }
-      
-      .title {
-        font-size: 2rem;
-      }
-      
-      .info-grid {
-        grid-template-columns: 1fr;
-      }
-      
-      .step-details {
-        grid-template-columns: 1fr;
-      }
-    }
-  </style>
-</head>
-<body>
-  <div class="certificate-container">
-    <div class="header">
-      <div class="company-name-box">
-        <h1 class="company-name">${certificateData.companyName}</h1>
-      </div>
-      <p class="subtitle">Certificato di Tracciabilità Blockchain</p>
-    </div>
-
-    <h2 class="section-title">📋 Informazioni Iscrizione</h2>
-    <div class="info-grid">
-      <div class="info-item">
-        <div class="info-label">📦 Nome Prodotto</div>
-        <div class="info-value">${certificateData.name}</div>
-      </div>
-      
-      <div class="info-item">
-        <div class="info-label">📅 Data di Origine</div>
-        <div class="info-value">${certificateData.date || 'N/D'}</div>
-      </div>
-      
-      <div class="info-item">
-        <div class="info-label">📍 Luogo di Produzione</div>
-        <div class="info-value">${certificateData.location || 'N/D'}</div>
-      </div>
-      
-      <div class="info-item">
-        <div class="info-label">📊 Stato</div>
-        <div class="info-value">✅ Certificato Attivo</div>
-      </div>
-      
-      ${certificateData.imageIpfsHash && certificateData.imageIpfsHash !== "N/A" ? `
-        <div class="info-item">
-          <div class="info-label">🖼️ Immagine Prodotto</div>
-          <div class="info-value">
-            <a href="https://musical-emerald-partridge.myfilebase.com/ipfs/${certificateData.imageIpfsHash}" 
-               target="_blank" 
-               class="blockchain-link">
-              🖼️ Apri Immagine
-            </a>
-          </div>
-        </div>
-      ` : ''}
-      
-      <div class="info-item">
-        <div class="info-label">🔗 Verifica Blockchain</div>
-        <div class="info-value">
-          <a href="https://polygonscan.com/inputdatadecoder?tx=${certificateData.transactionHash}" 
-             target="_blank" 
-             class="blockchain-link">
-            🔍 Verifica su Polygon
-          </a>
-        </div>
-      </div>
-    </div>
-
-    ${certificateData.description ? `
-      <div class="description-section">
-        <h3 class="description-title">📝 Descrizione</h3>
-        <div class="description-content">${certificateData.description}</div>
-      </div>
-    ` : ''}
-
-    ${certificateData.steps && certificateData.steps.length > 0 ? `
-      <div class="steps-section">
-        <h2 class="section-title">🔄 Fasi di Lavorazione</h2>
-        ${certificateData.steps.map((step, index) => `
-          <div class="step">
-            <div class="step-number-circle">${index + 1}</div>
-            <h3 class="step-header">Step ${index + 1}</h3>
-            <div class="step-details">
-              <div class="step-detail">
-                <strong>📦 Nome:</strong><br>
-                ${step.eventName}
-              </div>
-              <div class="step-detail">
-                <strong>📅 Data:</strong><br>
-                ${step.date || 'N/D'}
-              </div>
-              <div class="step-detail">
-                <strong>📍 Luogo:</strong><br>
-                ${step.location || 'N/D'}
-              </div>
-              ${step.attachmentsIpfsHash && step.attachmentsIpfsHash !== "N/A" ? `
-                <div class="step-detail">
-                  <strong>📎 Allegati:</strong><br>
-                  <a href="https://musical-emerald-partridge.myfilebase.com/ipfs/${step.attachmentsIpfsHash}" 
-                     target="_blank" 
-                     class="blockchain-link" 
-                     style="margin-top: 5px;">
-                    📁 Visualizza File
-                  </a>
-                </div>
-              ` : ''}
-              ${step.transactionHash ? `
-                <div class="step-detail">
-                  <strong>🔗 Verifica Blockchain:</strong><br>
-                  <a href="https://polygonscan.com/inputdatadecoder?tx=${step.transactionHash}" 
-                     target="_blank" 
-                     class="blockchain-link"
-                     style="margin-top: 5px;">
-                    🔍 Verifica Step
-                  </a>
-                </div>
-              ` : ''}
-            </div>
-            ${step.description ? `
-              <div class="step-description">
-                <strong>📝 Descrizione:</strong><br>
-                <div class="step-description-content">${step.description}</div>
-              </div>
-            ` : ''}
-          </div>
-        `).join('')}
-      </div>
-    ` : ''}
-
-    <div class="footer">
-      <p>Certificato generato con 🔗 <strong>SimplyChain</strong> il ${new Date(certificateData.createdAt).toLocaleDateString('it-IT')}</p>
-      <p>Servizio prodotto da <strong>SFY s.r.l.</strong></p>
-      <p>📧 Contattaci: sfy.startup@gmail.com</p>
-    </div>
-  </div>
-</body>
-</html>`;
-  };
-
-  // Funzione per scaricare il file HTML
-  const downloadHTMLFile = async (batch: Batch) => {
-    try {
-      console.log('🔥 Generando file HTML per download per batch:', batch.batchId);
-      
-      // Genera i dati del certificato (stesso formato del QR)
-      const cleanCompanyName = currentCompanyData.companyName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-      // Usa la funzione helper per ottenere il timestamp corretto
-      const timestamp = getBatchTimestamp(batch);
-      console.log('🔍 DEBUG Final timestamp for batch', batch.batchId, ':', timestamp);
-      
-      const certificateId = `${cleanCompanyName}_${batch.batchId}_${timestamp}`;
-      
-      const certificateData = {
-        batchId: batch.batchId,
-        name: batch.name,
-        companyName: currentCompanyData.companyName,
-        walletAddress: account?.address,
-        date: batch.date,
-        location: batch.location,
-        description: batch.description,
-        transactionHash: batch.transactionHash,
-        imageIpfsHash: batch.imageIpfsHash,
-        steps: batch.steps || [],
-        createdAt: new Date().toISOString(),
-        isActive: true,
-        viewCount: 0
-      };
-
-      // Genera l'HTML del certificato
-      const certificateHTML = generateCertificateHTMLClient(certificateData);
-      
-      // Crea e scarica il file
-      const blob = new Blob([certificateHTML], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const cleanName = batch.name.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_');
-      a.download = `${cleanName}_certificato.html`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      
-      console.log('✅ File HTML scaricato con successo');
-      setSuccessMessage('File HTML scaricato con successo!');
-      setShowSuccessModal(true);
-      
-    } catch (error: any) {
-      console.error('❌ Errore durante il download del file HTML:', error);
-      alert('❌ Errore durante il download del file HTML. Riprova più tardi.\n\nDettagli: ' + error.message);
-    }
-  };
-
   const handleExport = async (batch: Batch, exportType: 'pdf' | 'html', bannerId: string) => {
 
     try {
 
       console.log('Iniziando export per batch:', batch.batchId, 'tipo:', exportType);
 
-      // Per HTML, scarica il file HTML
+      // Per HTML, usa il sistema Realtime Database
       if (exportType === 'html') {
-        await downloadHTMLFile(batch);
+        const qrResult = await generateQRCode(batch);
+        
+        if (qrResult.success) {
+          // Apri il certificato in una nuova finestra
+          window.open(qrResult.certUrl, '_blank');
+          alert('🎉 Certificato HTML generato e aperto!');
+        } else {
+          throw new Error(qrResult.error);
+        }
         return;
       }
 
@@ -3688,33 +3194,6 @@ const Dashboard: React.FC<{ companyData: CompanyData }> = ({ companyData }) => {
 
         <>
 
-          {/* Paginazione superiore */}
-          {filteredBatches.length > itemsPerPage && (
-            <div className="flex items-center justify-center gap-3 mb-6 p-4">
-              <button
-                className="primary-gradient text-white px-3 py-2 rounded-md hover:scale-105 transition"
-                onClick={handlePreviousPage}
-                disabled={currentPage === 1}
-                style={{ opacity: currentPage === 1 ? 0.5 : 1 }}
-              >
-                ← Precedente
-              </button>
-              
-              <span className="text-white font-medium">
-                Pagina {currentPage} di {totalPages}
-              </span>
-              
-              <button
-                className="primary-gradient text-white px-3 py-2 rounded-md hover:scale-105 transition"
-                onClick={handleNextPage}
-                disabled={currentPage === totalPages}
-                style={{ opacity: currentPage === totalPages ? 0.5 : 1 }}
-              >
-                Successiva →
-              </button>
-            </div>
-          )}
-
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
 
             {currentItems.length > 0 ? (
@@ -3799,59 +3278,105 @@ const Dashboard: React.FC<{ companyData: CompanyData }> = ({ companyData }) => {
 
 
 
-                    <div className="mt-auto pt-4 border-t border-gray-600" style={{marginTop: '1rem'}}>
+                    <div className="mt-auto pt-4 border-t border-gray-600 flex justify-between items-center" style={{marginTop: '1rem'}}>
+
+                    <div className="text-sm text-muted-foreground">
+
+                      {batch.steps && batch.steps.length > 0 ? (
+
+                        <button
+
+                          className="accent-gradient text-white px-3 py-2 rounded-md hover:scale-105 transition"
+
+                          onClick={() => setSelectedBatchForSteps(batch)}
+
+                        >
+
+                          {batch.steps.length} steps
+
+                        </button>
+
+                      ) : (
+
+                        <button
+
+                          className="accent-gradient text-white px-3 py-2 rounded-md hover:scale-105 transition disabled"
+
+                          disabled={true}
+
+                        >
+
+                          0 steps
+
+                        </button>
+
+                      )}
 
                     </div>
 
-                  {/* Spacer element che riempie tutto lo spazio disponibile - posizionato dopo la linea */}
+
+                  </div>
+
+                  {/* Spacer element che riempie tutto lo spazio disponibile */}
                   <div style={{ flex: '1' }}></div>
 
                   {/* Pulsanti spostati fuori dal contenuto per allineamento corretto */}
-                  <div className="pt-4" style={{ display: 'flex', flexDirection: 'row', gap: '0.5rem', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                  <div className="pt-4" style={{ display: 'flex', flexDirection: 'row', gap: '0.5rem', alignItems: 'center', justifyContent: 'space-between' }}>
 
-                    {/* Pulsante Steps - sempre visibile */}
-                    <div>
-                      {batch.steps && batch.steps.length > 0 ? (
-                        <button
-                          className="accent-gradient text-white px-4 py-2 rounded-md hover:scale-105 transition text-sm font-medium whitespace-nowrap"
-                          onClick={() => setSelectedBatchForSteps(batch)}
-                        >
-                          {batch.steps.length} Steps
-                        </button>
-                      ) : (
-                        <button
-                          className="accent-gradient text-white px-4 py-2 rounded-md hover:scale-105 transition disabled text-sm font-medium whitespace-nowrap"
-                          disabled={true}
-                        >
-                          0 Steps
-                        </button>
-                      )}
-                    </div>
+                    {/* Pulsante Esporta - mostrato solo per batch chiusi con QR generato */}
 
-                    {/* Pulsante Esporta - mostrato solo per batch chiusi */}
-                    {batch.isClosed && (
+                    {batch.isClosed && batch.qrCodeGenerated && (
+
                       <button
-                        className="primary-gradient text-white px-4 py-2 rounded-md hover:scale-105 transition text-sm font-medium whitespace-nowrap"
+
+                        className="primary-gradient text-white px-3 py-2 rounded-md hover:scale-105 transition"
+
                         onClick={() => {
+
                           setSelectedBatchForExport(batch);
+
                           setShowExportModal(true);
+
                         }}
+
                       >
+
                         Esporta
+
                       </button>
+
                     )}
 
-                    {/* Pulsante Genera QR Code - mostrato solo per batch chiusi */}
+                    {/* Pulsante QR Code - mostrato solo per batch chiusi */}
+
                     {batch.isClosed && (
+
                       <button
-                        className="bg-gradient-to-r from-purple-600 to-purple-700 text-white px-4 py-2 rounded-md hover:scale-105 transition text-sm font-medium whitespace-nowrap"
+
+                        className="bg-gradient-to-r from-purple-600 to-purple-700 text-white px-3 py-2 rounded-md hover:scale-105 transition"
+
                         onClick={() => {
+
+                          if (batch.qrCodeGenerated) {
+
+                            // Mostra messaggio di attenzione per scarica QR
+
+                            alert('⚠️ Attenzione!\n\nIl QR Code è già stato generato per questo batch.\n\nCliccando su "Scarica QR Code" scaricherai nuovamente lo stesso QR Code associato a questo batch.\n\nQuesto è importante per mantenere la coerenza e non riempire inutilmente lo spazio del database.');
+
+                          }
+
                           setSelectedBatchForExport(batch);
+
                           setShowQRModal(true);
+
                         }}
+
                       >
-                        QR Code
+
+                        {batch.qrCodeGenerated ? 'Scarica QR Code' : 'Crea QR Code'}
+
                       </button>
+
                     )}
 
 
@@ -4088,14 +3613,6 @@ const Dashboard: React.FC<{ companyData: CompanyData }> = ({ companyData }) => {
 
           }}
 
-          onBatchUpdate={(updatedBatch) => {
-            setBatches(prevBatches => 
-              prevBatches.map(b => 
-                b.batchId === updatedBatch.batchId ? updatedBatch : b
-              )
-            );
-          }}
-
           onCreditsUpdate={(newCredits: number) => {
 
             setCurrentCompanyData(prev => ({ ...prev, credits: newCredits }));
@@ -4176,8 +3693,7 @@ const Dashboard: React.FC<{ companyData: CompanyData }> = ({ companyData }) => {
           }}
           onExportPDF={() => {
             // Per ora non fa nulla, come richiesto
-            setSuccessMessage('Funzionalità PDF in sviluppo');
-            setShowSuccessModal(true);
+            alert('Funzionalità PDF in sviluppo');
             setShowExportModal(false);
           }}
           onExportHTML={() => {
@@ -4242,17 +3758,6 @@ const Dashboard: React.FC<{ companyData: CompanyData }> = ({ companyData }) => {
 
         <QRCodeOfferModal onClose={() => setShowQRCodeModal(false)} />
 
-      )}
-
-      {/* Modale di successo */}
-      {showSuccessModal && (
-        <SuccessModal
-          message={successMessage}
-          onClose={() => {
-            setShowSuccessModal(false);
-            setSuccessMessage('');
-          }}
-        />
       )}
 
     </>
@@ -4949,11 +4454,7 @@ const AddStepModal: React.FC<{
 
           message={txResult?.message || loadingMessage}
 
-          onClose={() => {
-            setTxResult(null);
-            setLoadingMessage("");
-            onClose();
-          }}
+          onClose={() => {}}
 
         />
 
@@ -4977,13 +4478,11 @@ const FinalizeModal: React.FC<{
 
   onSuccess: () => void;
 
-  onBatchUpdate: (updatedBatch: Batch) => void;
-
   onCreditsUpdate: (credits: number) => void;
 
   currentCompanyData: any;
 
-}> = ({ batch, onClose, onSuccess, onBatchUpdate, onCreditsUpdate, currentCompanyData }) => {
+}> = ({ batch, onClose, onSuccess, onCreditsUpdate, currentCompanyData }) => {
 
   const account = useActiveAccount();
 
@@ -5000,28 +4499,6 @@ const FinalizeModal: React.FC<{
   const [certificateUrl, setCertificateUrl] = useState<string>("");
 
   // Funzione per generare QR Code automaticamente
-  // Funzione helper per ottenere il timestamp corretto per un batch
-  const getBatchTimestamp = (batch: Batch) => {
-    if (batch.qrCodeGenerated && batch.qrCodeTimestamp) {
-      return batch.qrCodeTimestamp;
-    } else if (batch.qrCodeGenerated && !batch.qrCodeTimestamp) {
-      // Controlla se esiste un timestamp salvato in localStorage
-      const savedTimestamp = localStorage.getItem(`qr_timestamp_${batch.batchId}`);
-      if (savedTimestamp) {
-        return parseInt(savedTimestamp);
-      } else {
-        // Per QR generati prima di questa modifica, usa un timestamp fisso
-        const fixedTimestamp = 1757772000000 + batch.batchId;
-        localStorage.setItem(`qr_timestamp_${batch.batchId}`, fixedTimestamp.toString());
-        return fixedTimestamp;
-      }
-    } else {
-      const newTimestamp = Date.now();
-      localStorage.setItem(`qr_timestamp_${batch.batchId}`, newTimestamp.toString());
-      return newTimestamp;
-    }
-  };
-
   const generateQRCode = async (batch: Batch) => {
     try {
       console.log('🔥 Generando QR Code automaticamente per batch:', batch.batchId);
@@ -5036,18 +4513,15 @@ const FinalizeModal: React.FC<{
       const { ref, set } = await import('firebase/database');
       const QRCode = await import('qrcode');
       
-      // Step 1: Log per QR già generato (ma permette rigenerazione)
+      // Step 1: Controlla se il QR code è già stato generato
       if (batch.qrCodeGenerated) {
-        console.log('🔄 Rigenerando QR Code per batch:', batch.batchId);
+        console.log('⚠️ QR Code già generato per questo batch:', batch.batchId);
+        return { success: false, error: 'QR Code già generato per questo batch' };
       }
       
       // Step 2: Prepara i dati del certificato
       const cleanCompanyName = currentCompanyData.companyName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-      // Usa la funzione helper per ottenere il timestamp corretto
-      const timestamp = getBatchTimestamp(batch);
-      console.log('🔍 DEBUG Final timestamp for batch', batch.batchId, ':', timestamp);
-      
-      const certificateId = `${cleanCompanyName}_${batch.batchId}_${timestamp}`;
+      const certificateId = `${cleanCompanyName}_${batch.batchId}_${Date.now()}`;
       const certificateData = {
         batchId: batch.batchId,
         name: batch.name,
@@ -5104,8 +4578,7 @@ const FinalizeModal: React.FC<{
           body: JSON.stringify({
             walletAddress: account?.address,
             batchId: batch.batchId,
-            qrCodeGenerated: true,
-            qrCodeTimestamp: batch.qrCodeTimestamp || timestamp
+            qrCodeGenerated: true
           })
         });
         console.log('✅ Stato QR salvato in Firestore');
@@ -5170,30 +4643,40 @@ const FinalizeModal: React.FC<{
 
         clearTimeout(timeoutId);
 
+        setTxResult({ status: "success", message: "Iscrizione finalizzata con successo!" });
+
         // Salva il transaction hash della finalizzazione
         console.log("Transaction hash per finalizzazione:", result.transactionHash);
 
-        // Genera automaticamente il QR Code dopo la finalizzazione (in background)
+        // Genera automaticamente il QR Code dopo la finalizzazione
+        setLoadingMessage("Generazione QR Code in corso...");
         const qrResult = await generateQRCode(batch);
         
         if (qrResult.success) {
           console.log('✅ QR Code generato automaticamente con successo');
+          setLoadingMessage("Finalizzazione completata! QR Code generato.");
           
           // Aggiorna lo stato del batch per mostrare che il QR è stato generato
-          onBatchUpdate({ ...batch, qrCodeGenerated: true, qrCodeTimestamp: batch.qrCodeTimestamp || Date.now(), isClosed: true });
+          setBatches(prevBatches => 
+            prevBatches.map(b => 
+              b.batchId === batch.batchId 
+                ? { ...b, qrCodeGenerated: true, isClosed: true }
+                : b
+            )
+          );
         } else {
           console.warn('⚠️ Errore nella generazione automatica del QR Code:', qrResult.error);
+          setLoadingMessage("Finalizzazione completata! (QR Code non generato)");
           
           // Chiudi comunque il batch anche se il QR non è stato generato
-          onBatchUpdate({ ...batch, isClosed: true });
+          setBatches(prevBatches => 
+            prevBatches.map(b => 
+              b.batchId === batch.batchId 
+                ? { ...b, isClosed: true }
+                : b
+            )
+          );
         }
-
-        // Chiudi automaticamente il modale dopo la finalizzazione
-        setTimeout(() => {
-          onSuccess();
-          setTxResult(null);
-          setLoadingMessage("");
-        }, 1000);
 
 
 
@@ -5429,11 +4912,7 @@ const FinalizeModal: React.FC<{
 
           message={txResult?.message || loadingMessage}
 
-          onClose={() => {
-            setTxResult(null);
-            setLoadingMessage("");
-            onClose();
-          }}
+          onClose={() => {}}
 
         />
 
@@ -6625,50 +6104,6 @@ const InfoModal: React.FC<{
 
       )
 
-    },
-
-    {
-
-      title: "Genera QR Code",
-
-      icon: "📱",
-
-      content: (
-
-        <div>
-
-          <div style={{ background: 'rgba(139, 92, 246, 0.1)', padding: '1.5rem', borderRadius: '1rem', border: '1px solid rgba(139, 92, 246, 0.3)', marginBottom: '1rem' }}>
-
-            <h5 style={{ color: '#8b5cf6', margin: '0 0 1rem 0', fontWeight: '600', fontSize: '1.1rem' }}>📱 QR Code per Certificati</h5>
-
-            <p style={{ margin: '0 0 1rem 0', color: '#d1d5db' }}>Genera un QR Code che riporta al tuo certificato online.</p>
-
-            <p style={{ margin: '0 0 1rem 0', color: '#d1d5db' }}>Il QR Code può essere stampato sulle etichette del prodotto per permettere ai clienti di verificare l'autenticità e la tracciabilità.</p>
-
-            <div style={{ background: 'rgba(139, 92, 246, 0.2)', padding: '1rem', borderRadius: '0.75rem', border: '1px solid rgba(139, 92, 246, 0.4)' }}>
-
-              <p style={{ margin: '0 0 0.5rem 0', color: '#a78bfa', fontWeight: '600' }}>💡 Come funziona:</p>
-
-              <ul style={{ paddingLeft: '1.5rem', color: '#d1d5db', margin: 0, fontSize: '0.9rem' }}>
-
-                <li>Il QR Code punta al certificato online</li>
-
-                <li>I clienti possono scansionarlo per verificare</li>
-
-                <li>Mostra tutte le informazioni di tracciabilità</li>
-
-                <li>Aggiornato in tempo reale</li>
-
-              </ul>
-
-            </div>
-
-          </div>
-
-        </div>
-
-      )
-
     }
 
   ];
@@ -7170,9 +6605,6 @@ const AziendaPage: React.FC = () => {
           </div>
         </main>
 
-        {/* Footer */}
-        <Footer />
-
       </div>
 
     </>
@@ -7199,9 +6631,7 @@ const QRInfoModal: React.FC<{
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <div className="w-10 h-10 bg-gradient-to-r from-purple-600 to-blue-600 rounded-xl flex items-center justify-center">
-                <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M3 11h8V3H3v8zm2-6h4v4H5V5zm8 12h8v8h-8v-8zm2-6h4v4h-4v-4zM3 21h8v-8H3v8zm2-6h4v4H5v-4zm8-8v2h2V3h-2zm0 8v2h2v-2h-2zm8 0v2h2v-2h-2zM7 7h2v2H7V7zm0 8h2v2H7v-2zm8-8h2v2h-2V7zm0 8h2v2h-2v-2z"/>
-                </svg>
+                <span className="text-white font-bold">📱</span>
               </div>
               <div>
                 <h2 className="text-xl font-bold text-white">Generazione QR Code</h2>
@@ -7308,41 +6738,9 @@ const QRInfoModal: React.FC<{
               onClick={onGenerateQR}
               className="flex-1 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-4 py-3 rounded-lg transition-all font-medium shadow-lg hover:shadow-purple-500/25"
             >
-              Genera QR Code
+              📱 Genera QR Code
             </button>
           </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Componente Modale di Successo
-const SuccessModal: React.FC<{
-  message: string;
-  onClose: () => void;
-}> = ({ message, onClose }) => {
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div 
-        className="bg-slate-800 rounded-2xl shadow-2xl max-w-md w-full" 
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="p-8 text-center">
-          <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-            <svg className="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-          
-          <h2 className="text-2xl font-bold text-white mb-4">{message}</h2>
-          
-          <button
-            onClick={onClose}
-            className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white px-8 py-3 rounded-lg transition-all font-medium shadow-lg hover:shadow-green-500/25"
-          >
-            Chiudi
-          </button>
         </div>
       </div>
     </div>
